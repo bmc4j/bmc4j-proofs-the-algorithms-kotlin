@@ -17,37 +17,42 @@ file carries a provenance header: upstream source path + commit
 
 ## Findings
 
-Two **genuine defects** were found and machine-witnessed (both silent 32-bit `Int` overflow in
-functions whose contracts promise otherwise):
+The proofs surface two defects, both **32-bit `Int` overflow reachable only near `Int.MAX`** — not
+everyday inputs. They are real (the contract is violated and a concrete counterexample is produced),
+but the framing here is deliberately plain: each is an Int-overflow edge in a function whose
+contract promises otherwise.
 
-1. **`dynamicProgramming/factorial(n: Int)`** returns `Int`, so it overflows silently for `n >= 13`
-   (e.g. `factorial(13)` returns `1932053504`; the correct value is `6227020800`). The docstring
-   promises "factorial of the input number" with no caveat. The Long-returning `math/getFactorial`
-   in the same repo does not have this problem on the same range.
+1. **`dynamicProgramming/factorial(n: Int)`** returns `Int`, so it overflows for `n >= 13`
+   (`factorial(13)` returns `1932053504`; the correct value is `6227020800`). The contract under
+   test — `n! > 0` for natural `n`, and agreement with the Long factorial on a Long-safe range —
+   genuinely refutes. The Long-returning `math/getFactorial` does not have this problem on the same
+   range.
 2. **`math/average(numbers: Array<Int>)`** sums into an `Int`, so the sum overflows for large
-   inputs. bmc4j's witness `average([1119760, 2146757126])` returns **`-1073545205`** — a *negative*
-   "average" of two *positive* numbers (correct: `1073938443`), violating the basic
-   `min <= average <= max` contract.
+   inputs. The witness `average([1119760, 2146757126])` returns `-1073545205` (correct:
+   `1073938443`), violating the basic `min <= average <= max` contract. `math/median` has the same
+   Int-sum overflow in its even-size branch.
 
-The proofs that pin these down expect `Verdict.REFUTED`; companion proofs over the overflow-free
-sub-domain `VERIFY`, localizing each defect precisely to the overflow (the truncation/logic is
-otherwise correct). `Int.isPrime()` was checked against an independent reference over `[0,30]` and
-**verified** — no defect found there.
+The bug-demonstrating proofs are **plain `@BmcProof`s asserting the real contract** — they REFUTE,
+so the test FAILS and that PR's CI goes **red**, with the counterexample in the posted report. That
+red check plus the counterexample *is* the "this code is broken" demonstration. Companion proofs
+over the overflow-free sub-domain VERIFY, localizing each defect to the overflow. `Int.isPrime()`
+was checked against an independent reference over `[0,30]` and **verified** — no defect found there.
 
 ## Live proof reports (open PRs)
 
 `main` is the scaffold (vendored sources + workflow) plus one trivial baseline proof. The proofs
 themselves land via **pull requests** — each PR's CI posts a per-proof Expected/Actual/Counterexample
 report as a PR comment, which is the shareable artifact. The PRs are intentionally left **open** as
-the showcase:
+the showcase. The two bug PRs have a **red** CI check (the asserted contract genuinely refutes); the
+isPrime PR is green:
 
-- **Prove math/average and median** — the headline refutation:
-  `average([1119760, 2146757126]) → -1073545205` (a negative average of two positives), plus the
-  even-size median Int-overflow. — _PR link below_
-- **Prove factorial** — the `Int` `factorial` silent-overflow refutation (`factorial(13)` etc.).
-  — _PR link below_
-- **Prove isPrime and the Long factorial** — the VERIFIED proofs (the tool proves things correct,
-  not only finds bugs). — _PR link below_
+- **Prove math/average and median** — plain proofs of `min <= average <= max` and the median range
+  contract; both REFUTE (witness `average([1119760, 2146757126]) → -1073545205`). Each ships with a
+  bounded-sum companion that VERIFIES. — _PR link below_
+- **Prove factorial** — plain proof that `factorial(n) > 0` / agrees with the Long factorial; REFUTES
+  for `n >= 13`. Ships with a "correct up to 12" companion that VERIFIES. — _PR link below_
+- **Prove isPrime and the Long factorial** — all VERIFIED (the tool proves things correct, not only
+  finds bugs); this PR's CI is green. — _PR link below_
 
 <!-- PR-LINKS -->
 

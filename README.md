@@ -34,6 +34,24 @@ sub-domain `VERIFY`, localizing each defect precisely to the overflow (the trunc
 otherwise correct). `Int.isPrime()` was checked against an independent reference over `[0,30]` and
 **verified** — no defect found there.
 
+## Live proof reports (open PRs)
+
+`main` is the scaffold (vendored sources + workflow) plus one trivial baseline proof. The proofs
+themselves land via **pull requests** — each PR's CI posts a per-proof Expected/Actual/Counterexample
+report as a PR comment, which is the shareable artifact. The PRs are intentionally left **open** as
+the showcase:
+
+- **Prove math/average and median** — the headline refutation:
+  `average([1119760, 2146757126]) → -1073545205` (a negative average of two positives), plus the
+  even-size median Int-overflow. — _PR link below_
+- **Prove factorial** — the `Int` `factorial` silent-overflow refutation (`factorial(13)` etc.).
+  — _PR link below_
+- **Prove isPrime and the Long factorial** — the VERIFIED proofs (the tool proves things correct,
+  not only finds bugs). — _PR link below_
+
+<!-- PR-LINKS -->
+
+
 ## Run it
 
 ```

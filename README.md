@@ -28,9 +28,9 @@ contract promises otherwise.
    genuinely refutes. The Long-returning `math/getFactorial` does not have this problem on the same
    range.
 2. **`math/average(numbers: Array<Int>)`** sums into an `Int`, so the sum overflows for large
-   inputs. The witness `average([1119760, 2146757126])` returns `-1073545205` (correct:
-   `1073938443`), violating the basic `min <= average <= max` contract. `math/median` has the same
-   Int-sum overflow in its even-size branch.
+   inputs, violating the basic `min <= average <= max` contract — e.g. two equal large negatives
+   whose Int sum wraps positive yield an "average" above the maximum. (The exact witness is in the
+   PR's report comment.) `math/median` has the same Int-sum overflow in its even-size branch.
 
 The bug-demonstrating proofs are **plain `@BmcProof`s asserting the real contract** — they REFUTE,
 so the test FAILS and that PR's CI goes **red**, with the counterexample in the posted report. That
@@ -46,15 +46,15 @@ report as a PR comment, which is the shareable artifact. The PRs are intentional
 the showcase. The two bug PRs have a **red** CI check (the asserted contract genuinely refutes); the
 isPrime PR is green:
 
-- **Prove math/average and median** — plain proofs of `min <= average <= max` and the median range
-  contract; both REFUTE (witness `average([1119760, 2146757126]) → -1073545205`). Each ships with a
-  bounded-sum companion that VERIFIES. — _PR link below_
-- **Prove factorial** — plain proof that `factorial(n) > 0` / agrees with the Long factorial; REFUTES
-  for `n >= 13`. Ships with a "correct up to 12" companion that VERIFIES. — _PR link below_
-- **Prove isPrime and the Long factorial** — all VERIFIED (the tool proves things correct, not only
-  finds bugs); this PR's CI is green. — _PR link below_
-
-<!-- PR-LINKS -->
+- **[Prove math/average and median](https://github.com/bmc4j/bmc4j-proofs-the-algorithms-kotlin/pull/1)**
+  — plain proofs of `min <= average <= max` and the median range contract; both REFUTE (the Int sum
+  overflows, putting the result outside `[min,max]`). Each ships with a bounded-sum companion that
+  VERIFIES. CI check: **red**.
+- **[Prove factorial](https://github.com/bmc4j/bmc4j-proofs-the-algorithms-kotlin/pull/2)** — plain
+  proof that `factorial(n) > 0` / agrees with the Long factorial; REFUTES for `n >= 13`. Ships with a
+  "correct up to 12" companion that VERIFIES. CI check: **red**.
+- **[Prove isPrime and the Long factorial](https://github.com/bmc4j/bmc4j-proofs-the-algorithms-kotlin/pull/3)**
+  — all VERIFIED (the tool proves things correct, not only finds bugs). CI check: **green**.
 
 
 ## Run it

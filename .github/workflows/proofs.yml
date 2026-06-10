@@ -1,0 +1,120 @@
+name: bmc4j proofs
+
+# Runs the @BmcProof suite on every PR and posts a proof-results report as a PR comment —
+# mirroring bmc4j's own CI report (verified / refuted / unknown per proof + a tally). Self-contained
+# for now; once bmc4j ships a reusable proof-report workflow this can `uses:` it instead.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  prove:
+    name: prove
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # Run every @BmcProof (each is a JUnit 5 test). Capture the bmc4j progress/summary output and
+      # don't fail the step yet — we post the report first, then fail the job below if any proof did.
+      - name: Run proofs
+        # bmc4j is resolved from GitHub Packages (the snapshot channel), which requires auth even for
+        # public packages. The workflow's own GITHUB_TOKEN (+ GITHUB_ACTOR) reads bmc4j's org packages;
+        # settings.gradle.kts reads them from these env vars.
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -o pipefail
+          # -Dbmc.summaryDir makes bmc4j emit one structured JSONL record per proof (expected verdict,
+          # actual verdict, counterexample, kind, pass/fail) — the report reads that, so it can show
+          # the counterexample even for a proof that PASSED because a REFUTED/UNKNOWN was expected.
+          if ./gradlew test --console=plain -Dbmc.summaryDir="$GITHUB_WORKSPACE/proof-summary" 2>&1 | tee proof-output.txt; then
+            echo "PROOFS_OK=1" >> "$GITHUB_ENV"
+          else
+            echo "PROOFS_OK=0" >> "$GITHUB_ENV"
+          fi
+
+      - name: Report proof results
+        if: ${{ always() }}
+        uses: actions/github-script@v7
+        with:
+          # Read bmc4j's structured per-proof JSONL (one object per proof: expected verdict, actual
+          # verdict, counterexample `detail`, `kind`, and `ok` = matched expectation). This is the only
+          # source that carries the counterexample even when a proof PASSED because a REFUTED/UNKNOWN
+          # was EXPECTED (a JUnit pass has no failure element). Schema: bmc4j ProofSummary.
+          script: |
+            const fs = require('fs'), path = require('path');
+            const dir = 'proof-summary';
+            const byProof = new Map();
+            if (fs.existsSync(dir)) {
+              for (const f of fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'))) {
+                for (const line of fs.readFileSync(path.join(dir, f), 'utf8').split('\n')) {
+                  const t = line.trim();
+                  if (!t) continue;
+                  try { const r = JSON.parse(t); byProof.set(r.proof, r); } catch (_) {}
+                }
+              }
+            }
+            // `detail` is bmc4j's full refutation message; pull out just the "counterexample: <vals>"
+            // witness for the column (fall back to a short clip for UNKNOWN reasons that have none).
+            const witness = d => {
+              const t = (d || '').trim();
+              if (!t) return '';
+              const m = t.match(/counterexample:\s*([^]*?)(?:\s+replay:|$)/);
+              if (m) return m[1].trim();
+              return t.length > 120 ? t.slice(0, 120) + '…' : t;
+            };
+            const results = [...byProof.values()].map(r => ({
+              proof: (r.proof || '?').split('.').slice(-2).join('.'),
+              expected: r.expected || 'VERIFIED',
+              actual: r.kind ? `${r.verdict} (${r.kind})` : (r.verdict || '?'),
+              detail: witness(r.detail),
+              ok: r.ok === true,
+            }));
+            // Mismatches (a proof that didn't meet its expectation) first, then by name.
+            results.sort((a, b) => (a.ok - b.ok) || a.proof.localeCompare(b.proof));
+            const n = results.length;
+            const passed = results.filter(r => r.ok).length;
+            const tally = n ? `${n} proofs → ${passed} matched expectation, ${n - passed} mismatched`
+                            : '(no proofs ran)';
+            const rows = results.map(r =>
+              `| \`${r.proof}\` | ${r.expected} | ${r.ok ? '✅' : '❌'} ${r.actual} | ${r.detail ? '`' + r.detail + '`' : ''} |`);
+            const marker = '<!-- bmc4j-proof-report -->';
+            const body = [
+              marker, '## bmc4j proof results', '', '`' + tally + '`', '',
+              n ? ['| Proof | Expected | Actual | Counterexample |', '|---|---|---|---|', ...rows].join('\n')
+                : '_No proofs ran._',
+            ].join('\n');
+            await core.summary.addRaw(body).write();
+            if (context.eventName === 'pull_request') {
+              const { owner, repo } = context.repo;
+              const issue_number = context.payload.pull_request.number;
+              const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number });
+              const existing = comments.find(c => c.body && c.body.includes(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            }
+
+      - name: Fail if any proof did not verify
+        if: ${{ env.PROOFS_OK != '1' }}
+        run: |
+          echo "::error::One or more proofs did not verify — see the proof-results report."
+          exit 1
